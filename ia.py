@@ -1,16 +1,23 @@
+from io import BytesIO
+
 from google import genai
 from google.genai import errors, types
+from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 # Se um modelo estiver ocupado ou sem cota, o app tenta o próximo da lista
 MODELOS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
 
-# Erros temporários: 429 = cota esgotada, 500/503 = servidor ocupado
-ERROS_TEMPORARIOS = (429, 500, 503)
+# Erros temporários: 429 = cota esgotada, 500/503 = servidor ocupado, 504 = demorou demais
+ERROS_TEMPORARIOS = (429, 500, 503, 504)
 
 # A busca no Google exige faturamento ativo no Google Cloud.
 # No plano gratuito deixamos desligada; mude para True se ativar o faturamento.
 USAR_BUSCA_WEB = False
+
+# Os modelos "pensam" antes de responder. Para ler caixas e receitas, pensar pouco
+# já basta e deixa a resposta bem mais rápida.
+PENSAMENTO_RAPIDO = types.ThinkingConfig(thinking_level="LOW")
 
 
 class DadosCaixa(BaseModel):
@@ -45,15 +52,59 @@ Se alguma informação não estiver legível, deixe o campo vazio. Não invente 
 """
 
 
+class ItemReceita(BaseModel):
+    """Um remédio da receita, já comparado com o estoque."""
+
+    nome_receitado: str
+    dosagem_receitada: str
+    id_estoque: int  # id do remédio equivalente no estoque, ou 0 se não houver
+    observacao: str  # ex.: "mesma substância, nome comercial diferente"
+
+
+class ResultadoReceita(BaseModel):
+    itens: list[ItemReceita]
+
+
+INSTRUCOES_RECEITA = """
+As fotos mostram uma receita médica (pode ser escrita à mão).
+1) Liste cada remédio receitado, com o nome e a dosagem como aparecem na receita.
+2) Para cada um, procure no ESTOQUE abaixo um remédio equivalente:
+   - mesmo nome, OU mesma substância ativa (ex.: Novalgina = Dipirona genérica).
+   - Se encontrar, coloque o id dele em id_estoque. Se não, use 0.
+   - Se a substância for a mesma mas a dosagem for diferente, ainda informe o id,
+     e explique em observacao (ex.: "mesma substância, mas a dosagem é diferente").
+   - Em observacao, explique em poucas palavras por que considerou equivalente
+     (ou deixe vazio se não encontrou).
+Não copie dados pessoais da receita (nome do paciente, do médico, CRM, endereço).
+Se não conseguir ler algum remédio, escreva "ilegível" no nome. Não invente remédios.
+
+ESTOQUE (id | nome | substância | dosagem):
+"""
+
+
 def _cliente(chave_api):
     """Cria a conexão com o Gemini sem repetições automáticas (nós mesmos trocamos de modelo)."""
     return genai.Client(
         api_key=chave_api,
         http_options=types.HttpOptions(
             retry_options=types.HttpRetryOptions(attempts=1),
-            timeout=60_000,  # desiste depois de 60 segundos
+            timeout=30_000,  # desiste depois de 30 segundos e tenta o próximo modelo
         ),
     )
+
+
+def _preparar_foto(conteudo):
+    """Diminui a foto antes de enviar: fica mais rápido e gasta menos cota.
+
+    Fotos de celular costumam ter mais de 3000 pixels; 1600 já é suficiente para ler a caixa.
+    """
+    imagem = Image.open(BytesIO(conteudo))
+    imagem = ImageOps.exif_transpose(imagem)  # corrige fotos tiradas "deitadas"
+    imagem = imagem.convert("RGB")
+    imagem.thumbnail((1600, 1600))
+    saida = BytesIO()
+    imagem.save(saida, format="JPEG", quality=85)
+    return types.Part.from_bytes(data=saida.getvalue(), mime_type="image/jpeg")
 
 
 def _gerar(cliente, conteudo, configuracao):
@@ -64,11 +115,10 @@ def _gerar(cliente, conteudo, configuracao):
             return cliente.models.generate_content(
                 model=modelo, contents=conteudo, config=configuracao
             )
-        except errors.APIError as erro:
-            if erro.code in ERROS_TEMPORARIOS:
-                ultimo_erro = erro  # problema temporário: tenta o próximo modelo
-                continue
-            raise  # outro tipo de erro: não adianta tentar de novo
+        except Exception as erro:
+            if isinstance(erro, errors.APIError) and erro.code not in ERROS_TEMPORARIOS:
+                raise  # erro "de verdade" (ex.: pedido inválido): não adianta tentar de novo
+            ultimo_erro = erro  # cota, servidor ocupado ou demora: tenta o próximo modelo
     raise ultimo_erro
 
 
@@ -78,13 +128,34 @@ def ler_caixa(chave_api, imagens):
     imagens: lista de pares (conteudo_em_bytes, tipo_da_imagem)
     """
     cliente = _cliente(chave_api)
-    fotos = [types.Part.from_bytes(data=conteudo, mime_type=tipo) for conteudo, tipo in imagens]
+    fotos = [_preparar_foto(conteudo) for conteudo, _tipo in imagens]
     configuracao = types.GenerateContentConfig(
         response_mime_type="application/json",
+        thinking_config=PENSAMENTO_RAPIDO,
         response_schema=DadosCaixa,
     )
     resposta = _gerar(cliente, [*fotos, INSTRUCOES], configuracao)
     return resposta.parsed
+
+
+def ler_receita(chave_api, imagens, estoque):
+    """Lê a receita e compara cada remédio com o estoque de casa.
+
+    imagens: lista de pares (conteudo_em_bytes, tipo_da_imagem)
+    estoque: lista de remédios vinda do banco (dicionários)
+    """
+    cliente = _cliente(chave_api)
+    fotos = [_preparar_foto(conteudo) for conteudo, _tipo in imagens]
+    lista_estoque = "\n".join(
+        f'{r["id"]} | {r["nome"]} | {r["principio_ativo"]} | {r["dosagem"]}' for r in estoque
+    ) or "(estoque vazio)"
+    configuracao = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        thinking_config=PENSAMENTO_RAPIDO,
+        response_schema=ResultadoReceita,
+    )
+    resposta = _gerar(cliente, [*fotos, INSTRUCOES_RECEITA + lista_estoque], configuracao)
+    return resposta.parsed.itens
 
 
 def para_que_serve(chave_api, nome, substancia):
@@ -129,8 +200,6 @@ Não informe dose, posologia nem recomende o uso.
         cliente,
         f"Com base no seu conhecimento, explique para que serve o remédio {remedio}.{formato}"
         "Se não conhecer este remédio, diga apenas que não sabe.",
-        None,
+        types.GenerateContentConfig(thinking_config=PENSAMENTO_RAPIDO),
     )
     return resposta.text, [], False
-
-

@@ -1,21 +1,28 @@
-MIT License
+PillBox AI
+Copyright (c) 2026 Paulo André Costa Monteiro. Todos os direitos reservados.
 
-Copyright (c) 2026 paulrobot22
+Este código-fonte é de autoria de Paulo André Costa Monteiro e está protegido
+pela Lei de Software (Lei nº 9.609/1998) e pela Lei de Direitos Autorais
+(Lei nº 9.610/1998).
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Ele está disponível publicamente APENAS para visualização e avaliação,
+por exemplo, por recrutadores e avaliadores em processos seletivos.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Sem autorização prévia e por escrito do autor, NÃO é permitido:
+- copiar, reproduzir ou redistribuir este código, no todo ou em parte;
+- modificar ou criar trabalhos derivados a partir dele;
+- usá-lo em produtos, serviços ou projetos próprios, comerciais ou não.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+A visualização e as cópias (forks) feitas dentro do GitHub ocorrem somente
+nos limites dos Termos de Serviço do GitHub e não concedem nenhum direito
+de uso além deles.
+
+Para solicitar autorização, entre em contato pelo perfil do autor no GitHub:
+https://github.com/paulrobot22
+
+---
+
+English summary: Copyright (c) 2026 Paulo André Costa Monteiro. All rights reserved.
+This source code is publicly available for viewing and evaluation only.
+No permission is granted to copy, modify, distribute or use it, in whole or
+in part, without the author's prior written consent.
