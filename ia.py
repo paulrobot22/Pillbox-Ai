@@ -2,8 +2,15 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel
 
-# Se o primeiro modelo estiver sobrecarregado, o app tenta o próximo da lista
+# Se um modelo estiver ocupado ou sem cota, o app tenta o próximo da lista
 MODELOS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+
+# Erros temporários: 429 = cota esgotada, 500/503 = servidor ocupado
+ERROS_TEMPORARIOS = (429, 500, 503)
+
+# A busca no Google exige faturamento ativo no Google Cloud.
+# No plano gratuito deixamos desligada; mude para True se ativar o faturamento.
+USAR_BUSCA_WEB = False
 
 
 class DadosCaixa(BaseModel):
@@ -38,29 +45,92 @@ Se alguma informação não estiver legível, deixe o campo vazio. Não invente 
 """
 
 
+def _cliente(chave_api):
+    """Cria a conexão com o Gemini sem repetições automáticas (nós mesmos trocamos de modelo)."""
+    return genai.Client(
+        api_key=chave_api,
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=1),
+            timeout=60_000,  # desiste depois de 60 segundos
+        ),
+    )
+
+
+def _gerar(cliente, conteudo, configuracao):
+    """Chama o Gemini tentando cada modelo da lista até um responder."""
+    ultimo_erro = None
+    for modelo in MODELOS:
+        try:
+            return cliente.models.generate_content(
+                model=modelo, contents=conteudo, config=configuracao
+            )
+        except errors.APIError as erro:
+            if erro.code in ERROS_TEMPORARIOS:
+                ultimo_erro = erro  # problema temporário: tenta o próximo modelo
+                continue
+            raise  # outro tipo de erro: não adianta tentar de novo
+    raise ultimo_erro
+
+
 def ler_caixa(chave_api, imagens):
     """Envia as fotos da caixa para o Gemini e devolve os dados encontrados.
 
     imagens: lista de pares (conteudo_em_bytes, tipo_da_imagem)
     """
-    cliente = genai.Client(api_key=chave_api)
+    cliente = _cliente(chave_api)
     fotos = [types.Part.from_bytes(data=conteudo, mime_type=tipo) for conteudo, tipo in imagens]
     configuracao = types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=DadosCaixa,
     )
+    resposta = _gerar(cliente, [*fotos, INSTRUCOES], configuracao)
+    return resposta.parsed
 
-    ultimo_erro = None
-    for modelo in MODELOS:
+
+def para_que_serve(chave_api, nome, substancia):
+    """Diz para que serve o remédio.
+
+    Devolve (resumo, lista de fontes, verificado).
+    verificado = True quando a resposta veio de uma pesquisa na web com fontes.
+    """
+    cliente = _cliente(chave_api)
+    remedio = f'"{nome}" (substância: {substancia or "não informada"})'
+    formato = """
+Responda em português simples, para uma pessoa leiga:
+- Para que serve (as indicações), em até 4 tópicos curtos.
+Não informe dose, posologia nem recomende o uso.
+"""
+
+    # 1) Pesquisa a bula na web, se a busca estiver ligada
+    if USAR_BUSCA_WEB:
         try:
-            resposta = cliente.models.generate_content(
-                model=modelo,
-                contents=[*fotos, INSTRUCOES],
-                config=configuracao,
+            resposta = _gerar(
+                cliente,
+                f"Pesquise a bula do remédio {remedio}, de preferência no Bulário Eletrônico "
+                f"da Anvisa ou na bula do fabricante.{formato}"
+                "Se não encontrar uma fonte confiável, diga apenas que não encontrou.",
+                types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())]),
             )
-            return resposta.parsed
-        except errors.ServerError as erro:  # modelo ocupado: tenta o próximo
-            ultimo_erro = erro
+        except errors.APIError as erro:
+            if erro.code != 429:
+                raise
+            # sem cota de busca: segue para a resposta sem pesquisa, abaixo
+        else:
+            fontes = []
+            metadados = resposta.candidates[0].grounding_metadata if resposta.candidates else None
+            if metadados and metadados.grounding_chunks:
+                for trecho in metadados.grounding_chunks:
+                    if trecho.web and trecho.web.uri:
+                        fontes.append((trecho.web.title or trecho.web.uri, trecho.web.uri))
+            return resposta.text, fontes, True
 
-    raise ultimo_erro
+    # 2) Sem busca: usa o conhecimento da própria IA (sem fontes)
+    resposta = _gerar(
+        cliente,
+        f"Com base no seu conhecimento, explique para que serve o remédio {remedio}.{formato}"
+        "Se não conhecer este remédio, diga apenas que não sabe.",
+        None,
+    )
+    return resposta.text, [], False
+
 

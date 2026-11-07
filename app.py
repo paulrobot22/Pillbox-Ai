@@ -1,5 +1,7 @@
 from datetime import date
 
+from urllib.parse import quote
+
 import streamlit as st
 
 import banco
@@ -21,6 +23,10 @@ def situacao_validade(validade_texto):
         return "🟡 Vence em breve"
     return "🟢 OK"
 
+@st.cache_data(show_spinner=False)
+def buscar_bula(nome, substancia):
+    """Guarda o resultado na memória para não repetir a mesma pesquisa (economiza a cota gratuita)."""
+    return ia.para_que_serve(st.secrets["GEMINI_API_KEY"], nome, substancia)
 
 # ---------- Cadastro ----------
 st.subheader("Adicionar remédio")
@@ -111,6 +117,33 @@ else:
         for r in remedios
     ]
     st.dataframe(tabela, hide_index=True, width="stretch")
+
+    # Para que serve? (pesquisa a bula na web)
+    st.subheader("🔎 Para que serve?")
+    por_rotulo = {f'#{r["id"]} – {r["nome"]} {r["dosagem"]}': r for r in remedios}
+    rotulo = st.selectbox("Escolha um remédio", list(por_rotulo.keys()), key="escolha_bula")
+    if st.button("Buscar na bula"):
+        remedio = por_rotulo[rotulo]
+        with st.spinner("Pesquisando a bula..."):
+            try:
+                texto, fontes, verificado = buscar_bula(remedio["nome"], remedio["principio_ativo"])
+            except Exception as erro:
+                st.error("Não consegui pesquisar a bula agora. Tente de novo em instantes.")
+                with st.expander("Detalhes técnicos"):
+                    st.code(str(erro))
+            else:
+                if not verificado:
+                    st.info("ℹ️ Resposta da IA sem consulta à bula. Confirme na bula oficial pelo link abaixo.")
+                st.markdown(texto)
+                if fontes:
+                    st.caption("Fontes consultadas:")
+                    for titulo, link in fontes:
+                        st.markdown(f"- [{titulo}]({link})")
+                link_anvisa = "https://consultas.anvisa.gov.br/#/bulario/q/?nomeProduto=" + quote(remedio["nome"])
+                st.markdown(f"📄 [Ver a bula oficial no Bulário Eletrônico da Anvisa]({link_anvisa})")
+                st.warning("Informação de apoio. Não substitui a orientação de um médico ou farmacêutico nem a leitura da bula completa.")
+                
+
 
     # Remover um remédio do estoque
     opcoes = {f'#{r["id"]} – {r["nome"]} {r["dosagem"]}': r["id"] for r in remedios}
