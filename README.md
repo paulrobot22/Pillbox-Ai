@@ -28,6 +28,20 @@ que precisa comprar.
 | 📦 **Controle de estoque** | Lista os remédios com alerta de validade: 🟢 OK, 🟡 vence em até 30 dias, 🔴 vencido |
 | 🔎 **Para que serve?** | Explica, em linguagem simples, as indicações do remédio, com link para a bula oficial no Bulário Eletrônico da Anvisa |
 
+## 📸 Demonstração
+
+**📝 Tenho em casa?** A IA lê a receita e compara com o estoque, reconhecendo equivalentes:
+
+<p align="center"><img src="imagens/receita.png" width="600" alt="Consulta da receita"></p>
+
+**➕ Adicionar remédio:** fotografe a caixa e a IA preenche o cadastro:
+
+<p align="center"><img src="imagens/cadastro.png" width="600" alt="Cadastro por foto"></p>
+
+**📦 Meu estoque:** validade, alertas e "Para que serve?":
+
+<p align="center"><img src="imagens/estoque.png" width="600" alt="Estoque de remédios"></p>
+
 ## 🧠 Decisões técnicas
 
 - **Humano no circuito:** a IA preenche o formulário, mas o usuário confere e confirma antes de salvar.
